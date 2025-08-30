@@ -1,191 +1,131 @@
-// Edge Function: serves UI and also acts as API:
-// - GET /?link=<M3U_URL> => returns raw M3U (text/plain)
-// - GET /               => returns HTML UI
-
+// M3U8 Player (Edge) — plays a direct .m3u8 via ?link=<URL>
 export const config = { runtime: "edge" };
 
 export default async function handler(req) {
   const url = new URL(req.url);
-  const link = url.searchParams.get("link");
+  const src = url.searchParams.get("link") || "";
+  const title = url.searchParams.get("title") || "M3U8 Player";
+  const autoplay = url.searchParams.get("autoplay") === "1"; // optional ?autoplay=1
+  const muted = url.searchParams.get("muted") !== "0";       // default muted=on (mobile autoplay)
+  const poster = url.searchParams.get("poster") || "";       // optional poster image
 
-  // If ?link= supplied: fetch and return raw M3U
-  if (link) {
-    if (!isValidHttpUrl(link)) {
-      return textResponse("Error: Invalid URL.", 400);
-    }
-    try {
-      const resp = await fetch(link, {
-        // Some M3U hosts require a UA
-        headers: { "User-Agent": "Mozilla/5.0" },
-        redirect: "follow",
-      });
-      if (!resp.ok) {
-        return textResponse(`Error: Failed to load M3U (${resp.status})`, 502);
-      }
-      const body = await resp.text();
-      // CORS open so you can call this API from anywhere if you want
-      return new Response(body, {
-        status: 200,
-        headers: {
-          "Content-Type": "text/plain; charset=utf-8",
-          "Access-Control-Allow-Origin": "*",
-          "Cache-Control": "no-store",
-        },
-      });
-    } catch (e) {
-      return textResponse("Error: " + (e?.message || "Unknown"), 500);
-    }
-  }
-
-  // Otherwise: return the HTML UI
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>M3U Loader (Vercel)</title>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<title>${escapeHtml(title)}</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <style>
-  :root { color-scheme: light dark; }
-  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; padding: 24px; background: #f6f7f9; }
-  .wrap { max-width: 980px; margin: 0 auto; }
-  h1 { margin: 0 0 12px; font-size: 22px; }
-  .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
-  .row { display: flex; gap: 8px; align-items: center; }
-  input[type="text"] { flex: 1; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 10px; outline: none; }
-  button { padding: 10px 14px; border: 0; border-radius: 10px; background: #111827; color: #fff; cursor: pointer; }
-  button:disabled { opacity: .6; cursor: not-allowed; }
-  .tabs { display: flex; gap: 8px; margin-top: 12px; }
-  .tab { padding: 8px 10px; border-radius: 8px; cursor: pointer; background: #f3f4f6; }
-  .tab.active { background: #111827; color: #fff; }
-  pre, .list { margin-top: 12px; background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 12px; max-height: 70vh; overflow: auto; white-space: pre-wrap; }
-  .ch { padding: 8px; border-bottom: 1px dashed #e5e7eb; }
-  .ch:last-child { border-bottom: 0; }
-  .name { font-weight: 600; }
-  .meta { font-size: 12px; color: #6b7280; }
-  a.btn { display: inline-block; margin-left: 8px; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 8px; text-decoration: none; }
-  .muted { color: #6b7280; font-size: 12px; }
+  :root { color-scheme: dark light; }
+  html,body { height:100%; margin:0; }
+  body { display:flex; flex-direction:column; background:#0b0b0b; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; }
+  header { color:#e5e7eb; padding:12px 16px; font-size:14px; background:#111316; border-bottom:1px solid #1f2937; display:flex; align-items:center; gap:10px; }
+  header b { font-weight:600; }
+  #wrap { flex:1; display:flex; align-items:center; justify-content:center; padding:0; }
+  video { width:100%; height:100%; max-height:100vh; background:#000; outline:none; }
+  .bar { display:flex; gap:8px; align-items:center; margin-left:auto; }
+  input[type=text] { min-width:280px; max-width:55vw; width:55vw; padding:8px 10px; border-radius:8px; border:1px solid #374151; background:#0f1115; color:#e5e7eb; }
+  button { padding:8px 12px; border:1px solid #374151; border-radius:8px; background:#1f2937; color:#e5e7eb; cursor:pointer; }
+  button:hover { background:#2a3443; }
+  .note { color:#9ca3af; font-size:12px; padding:8px 16px; }
 </style>
 </head>
 <body>
-  <div class="wrap">
-    <h1>M3U Loader (Vercel)</h1>
-    <div class="card">
-      <div class="row">
-        <input id="m3uLink" type="text" placeholder="Enter M3U URL (e.g. https://example.com/playlist.m3u)">
-        <button id="btnLoad" onclick="loadM3U()">Load</button>
-      </div>
-      <div class="tabs">
-        <div id="tabRaw" class="tab active" onclick="setMode('raw')">Raw</div>
-        <div id="tabList" class="tab" onclick="setMode('list')">Parsed List</div>
-      </div>
-      <pre id="rawBox">M3U content will appear here...</pre>
-      <div id="listBox" class="list" style="display:none"></div>
-      <div class="muted">Tip: The same endpoint acts as an API: <code>?link=&lt;M3U_URL&gt;</code> returns <em>text/plain</em>.</div>
-    </div>
+<header>
+  <b>HLS Player</b>
+  <span id="liveTitle" style="opacity:.8;"></span>
+  <div class="bar">
+    <input id="m3u8" type="text" placeholder="https://.../playlist.m3u8" value="${escapeHtml(src)}" />
+    <button onclick="loadFromInput()">Play</button>
   </div>
+</header>
 
+<div id="wrap">
+  <video id="video" playsinline ${autoplay ? "autoplay" : ""} ${muted ? "muted" : ""} controls ${poster ? `poster="${escapeHtml(poster)}"` : ""}></video>
+</div>
+
+<div class="note">
+  Tip: Provide a direct .m3u8 link via <code>?link=</code>. Example:
+  <code>?link=${escapeHtml("https://cdn12isb.tamashaweb.com:8087/jazzauth/AAN-TV-abr/playlist.m3u8")}</code>
+  • Autoplay: <code>&autoplay=1</code> • Unmute: <code>&muted=0</code> • Title: <code>&title=My+Channel</code>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 <script>
-  let mode = 'raw';
-  function setMode(m) {
-    mode = m;
-    document.getElementById('tabRaw').classList.toggle('active', m==='raw');
-    document.getElementById('tabList').classList.toggle('active', m==='list');
-    document.getElementById('rawBox').style.display = (m==='raw') ? '' : 'none';
-    document.getElementById('listBox').style.display = (m==='list') ? '' : 'none';
+  const video = document.getElementById('video');
+  const titleEl = document.getElementById('liveTitle');
+  const input = document.getElementById('m3u8');
+
+  function setTitle(t) {
+    titleEl.textContent = t ? "— " + t : "";
+    document.title = t ? (t + " · HLS Player") : "HLS Player";
   }
 
-  async function loadM3U() {
-    const link = document.getElementById('m3uLink').value.trim();
-    if (!link) return alert('Enter M3U URL');
-    const btn = document.getElementById('btnLoad');
-    const rawBox = document.getElementById('rawBox');
-    const listBox = document.getElementById('listBox');
-    btn.disabled = true;
-    rawBox.textContent = 'Loading...';
-    listBox.innerHTML = '';
-    try {
-      const resp = await fetch('?link=' + encodeURIComponent(link));
-      const text = await resp.text();
-      rawBox.textContent = text;
-
-      // Simple M3U parser to display channels in "Parsed List" tab
-      const channels = parseM3U(text);
-      if (channels.length) {
-        listBox.innerHTML = channels.map(ch => {
-          const logo = ch.attrs['tvg-logo'] || '';
-          const name = ch.attrs['tvg-name'] || ch.title || '(no name)';
-          const group = ch.attrs['group-title'] || '';
-          const groupHtml = group ? ' • ' + escapeHtml(group) : '';
-          const logoHtml = logo ? '<img src="'+escapeHtml(logo)+'" alt="" style="height:18px;vertical-align:middle;margin-right:6px;border-radius:4px;">' : '';
-          return '<div class="ch">' +
-                   '<div class="name">' + logoHtml + escapeHtml(name) + '<a class="btn" href="'+escapeHtml(ch.url)+'" target="_blank" rel="noopener">Open</a></div>' +
-                   '<div class="meta">' + escapeHtml(ch.title) + groupHtml + '</div>' +
-                   '<div class="meta"><code>'+escapeHtml(ch.url)+'</code></div>' +
-                 '</div>';
-        }).join('');
-      } else {
-        listBox.innerHTML = '<div class="ch">No channels parsed.</div>';
-      }
-
-    } catch (e) {
-      rawBox.textContent = 'Error: ' + e.message;
-      listBox.innerHTML = '<div class="ch">Error loading/parsing.</div>';
-    } finally {
-      btn.disabled = false;
+  async function playSrc(src) {
+    if (!src) return;
+    // If Safari/iOS supports HLS natively:
+    if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = src;
+      try { await video.play().catch(()=>{}); } catch(e){}
+      return;
     }
-  }
-
-  function parseM3U(text) {
-    const lines = text.split(/\\r?\\n/);
-    const result = [];
-    let pending = null;
-    for (let i=0; i<lines.length; i++) {
-      const line = lines[i].trim();
-      if (!line) continue;
-      if (line.startsWith('#EXTINF')) {
-        // Parse attributes from #EXTINF:-1 key="value" key="value",Title
-        const m = line.match(/^#EXTINF[^,]*,(.*)$/);
-        const title = m ? m[1].trim() : '';
-        const attrs = {};
-        const attrPattern = /([a-zA-Z0-9-]+)="([^"]*)"/g;
-        let am;
-        while ((am = attrPattern.exec(line)) !== null) {
-          attrs[am[1]] = am[2];
+    // Otherwise use hls.js
+    if (Hls.isSupported()) {
+      // Clean previous instance if any
+      if (window._hls) { try { window._hls.destroy(); } catch(e){} }
+      const hls = new Hls({ maxBufferLength: 30, liveSyncDuration: 3, enableWorker: true });
+      window._hls = hls;
+      hls.on(Hls.Events.ERROR, (ev, data) => {
+        if (data && data.fatal) {
+          console.warn('HLS fatal error:', data.type, data.details);
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR: hls.startLoad(); break;
+            case Hls.ErrorTypes.MEDIA_ERROR: hls.recoverMediaError(); break;
+            default: hls.destroy(); break;
+          }
         }
-        pending = { title, attrs };
-      } else if (!line.startsWith('#') && pending) {
-        result.push({ title: pending.title, attrs: pending.attrs, url: line });
-        pending = null;
-      }
+      });
+      hls.loadSource(src);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, async () => {
+        try { await video.play().catch(()=>{}); } catch(e){}
+      });
+    } else {
+      alert('HLS not supported in this browser.');
     }
-    return result;
   }
 
-  function escapeHtml(s) {
-    return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  function loadFromInput() {
+    const val = input.value.trim();
+    if (!val) { alert('Enter a .m3u8 link'); return; }
+    // Update query param for shareable URL
+    const u = new URL(location.href);
+    u.searchParams.set('link', val);
+    history.replaceState(null, '', u.toString());
+    setTitle(val.split('/').pop());
+    playSrc(val);
   }
+
+  // Auto-load from ?link= if present
+  (function init(){
+    const u = new URL(location.href);
+    const link = u.searchParams.get('link') || '';
+    const title = u.searchParams.get('title') || '';
+    if (title) setTitle(title); else if (link) setTitle(link.split('/').pop());
+    if (link) playSrc(link);
+  })();
 </script>
 </body>
 </html>`;
+
   return new Response(html, {
     status: 200,
     headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
   });
 }
 
-function isValidHttpUrl(s) {
-  try {
-    const u = new URL(s);
-    return u.protocol === "http:" || u.protocol === "https:";
-  } catch { return false; }
-}
-function textResponse(msg, status = 200) {
-  return new Response(msg, {
-    status,
-    headers: {
-      "Content-Type": "text/plain; charset=utf-8",
-      "Access-Control-Allow-Origin": "*",
-      "Cache-Control": "no-store",
-    },
-  });
+// Small HTML escaper for safety
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
 }
