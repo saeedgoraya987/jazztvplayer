@@ -1,4 +1,4 @@
-// Minimal M3U8 Player (Edge) — title only, sleek UI, no Rotate/PiP/Quality
+// Minimal M3U8 Player (Edge) — title + video, controls BELOW the player (not overlay)
 export const config = { runtime: "edge" };
 
 export default async function handler(req) {
@@ -19,48 +19,48 @@ export default async function handler(req) {
 <style>
   :root { color-scheme: dark light;
     --bg:#0b0b0b; --card:#111316; --fg:#e5e7eb; --line:#1f2937;
-    --btn:#1f2937; --btnh:#2a3443; --glass:rgba(15,17,21,.6);
+    --btn:#1f2937; --btnh:#2a3443;
   }
   *{box-sizing:border-box}
   html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);
     font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
   .safe{padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
-  header{position:sticky;top:0;z-index:20;background:var(--card);border-bottom:1px solid var(--line);padding:10px 12px}
+
+  /* Header (title only; remove header block if you want zero chrome) */
+  header{position:sticky;top:0;z-index:5;background:var(--card);border-bottom:1px solid var(--line);padding:10px 12px}
   .title{font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
-  .stage{position:relative;width:100%;aspect-ratio:16/9;background:#000}
-  @media (min-height:700px){ .stage{height:calc(100vh - 56px);aspect-ratio:auto} }
-  video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
+  /* Player area */
+  .stage{position:relative; width:100%; aspect-ratio:16/9; background:#000;}
+  @media (min-height:700px){ .stage{height:calc(100vh - 56px - 86px); aspect-ratio:auto} } /* leave room for control bar */
+  video{position:absolute; inset:0; width:100%; height:100%; object-fit:contain; background:#000;}
 
-  /* Tap to play */
-  .overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
-  .pill{pointer-events:auto;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.2);
-        padding:10px 14px;border-radius:999px;font-weight:600;backdrop-filter:blur(2px)}
-  .hidden{display:none!important}
+  /* Tap-to-play overlay (only to unlock autoplay on mobile) */
+  .overlay{position:absolute; inset:0; display:flex; align-items:center; justify-content:center}
+  .pill{background:rgba(0,0,0,.35); border:1px solid rgba(255,255,255,.2); padding:10px 14px; border-radius:999px; font-weight:600; backdrop-filter:blur(2px)}
+  .hidden{display:none !important}
 
-  /* Floating controls */
+  /* Loading spinner */
+  .spinner{position:absolute; top:10px; right:10px; width:22px; height:22px; border-radius:50%;
+           border:3px solid rgba(255,255,255,.25); border-top-color:#fff; animation:spin 1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* Controls BELOW the video */
   .controls{
-    position:absolute; left:0; right:0; bottom:0;
-    display:flex; gap:10px; justify-content:center; align-items:center;
-    padding:10px 12px calc(10px + env(safe-area-inset-bottom));
-    background:linear-gradient(180deg, rgba(0,0,0,0) 0%, var(--glass) 35%, var(--glass) 100%);
+    background:var(--card); border-top:1px solid var(--line);
+    padding:12px 12px calc(12px + env(safe-area-inset-bottom));
   }
-  .bar{
-    display:flex; gap:8px; background:rgba(17,19,22,.7);
-    border:1px solid #2b3340; border-radius:14px; padding:8px; backdrop-filter:blur(6px)
-  }
+  .bar{display:flex; gap:10px; justify-content:center; flex-wrap:wrap;}
   button{
-    min-width:104px; padding:10px 12px; border-radius:10px;
-    border:1px solid #2b3340; background:var(--btn); color:var(--fg);
-    font-weight:600
+    min-width:112px; padding:10px 12px; border-radius:10px;
+    border:1px solid #2b3340; background:var(--btn); color:var(--fg); font-weight:600;
   }
   button:hover{background:var(--btnh)}
-  .spinner{position:absolute;top:10px;right:10px;width:22px;height:22px;border-radius:50%;
-           border:3px solid rgba(255,255,255,.25);border-top-color:#fff;animation:spin 1s linear infinite}
-  @keyframes spin{to{transform:rotate(360deg)}}
-  .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(16px + env(safe-area-inset-bottom));
-         background:#111827;color:#fff;padding:10px 14px;border-radius:10px;border:1px solid #2b3340;
-         box-shadow:0 10px 30px rgba(0,0,0,.3);font-size:13px;z-index:30}
+
+  .toast{position:fixed; left:50%; transform:translateX(-50%);
+         bottom:calc(16px + env(safe-area-inset-bottom)); background:#111827; color:#fff;
+         padding:10px 14px; border-radius:10px; border:1px solid #2b3340; box-shadow:0 10px 30px rgba(0,0,0,.3);
+         font-size:13px; z-index:10}
 </style>
 </head>
 <body>
@@ -68,20 +68,19 @@ export default async function handler(req) {
 
   <main>
     <section class="stage safe">
-      <video id="video" playsinline ${autoplay ? "autoplay" : ""} ${muted ? "muted" : ""} controls ${poster ? `poster="${esc(poster)}"` : ""}></video>
-
+      <video id="video" playsinline ${autoplay ? "autoplay" : ""} ${muted ? "muted" : ""} ${poster ? `poster="${esc(poster)}"` : ""}></video>
       <div id="tap" class="overlay ${autoplay ? "hidden": ""}">
         <div class="pill">Tap to play ▶</div>
       </div>
-
       <div id="loading" class="spinner hidden" aria-hidden="true"></div>
+    </section>
 
-      <div class="controls">
-        <div class="bar">
-          <button id="btnToggle">Play</button>
-          <button id="btnMute">${muted ? "Unmute" : "Mute"}</button>
-          <button id="btnFullscreen">Fullscreen</button>
-        </div>
+    <!-- Controls are OUTSIDE the video now -->
+    <section class="controls safe">
+      <div class="bar">
+        <button id="btnToggle">Play</button>
+        <button id="btnMute">${muted ? "Unmute" : "Mute"}</button>
+        <button id="btnFullscreen">Fullscreen</button>
       </div>
     </section>
   </main>
@@ -104,7 +103,7 @@ export default async function handler(req) {
     if(!src){ showToast('No stream URL'); return; }
     loading.classList.remove('hidden');
 
-    if(video.canPlayType('application/vnd.apple.mpegurl')){  // iOS/Safari native
+    if(video.canPlayType('application/vnd.apple.mpegurl')){ // iOS / Safari
       video.src = src; video.load();
       try{ await video.play(); }catch{}
       loading.classList.add('hidden');
@@ -137,9 +136,9 @@ export default async function handler(req) {
   btnToggle.onclick = async ()=>{ if(video.paused){ try{ await video.play(); }catch{} } else { video.pause(); } };
   btnMute.onclick = ()=>{ video.muted = !video.muted; btnMute.textContent = video.muted ? 'Unmute':'Mute'; };
   btnFullscreen.onclick = async ()=>{ try{
-      if(document.fullscreenElement) { await document.exitFullscreen(); }
-      else { await document.documentElement.requestFullscreen({navigationUI:'hide'}); }
-    }catch{} };
+    if(document.fullscreenElement) await document.exitFullscreen();
+    else await document.documentElement.requestFullscreen({navigationUI:'hide'});
+  }catch{} };
 
   // Overlay & spinner behavior
   ['play','playing'].forEach(e=> video.addEventListener(e, ()=> tap.classList.add('hidden')));
@@ -151,7 +150,7 @@ export default async function handler(req) {
 
   tap.addEventListener('click', async ()=>{ tap.classList.add('hidden'); try{ await video.play(); }catch{} });
 
-  // Auto init from ?link=
+  // Init from ?link=
   (function init(){ const src = ${JSON.stringify(src)}; if(src){ attachAndPlay(src); } })();
 </script>
 </body>
@@ -160,4 +159,4 @@ export default async function handler(req) {
   return new Response(html, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
-function esc(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;', "'":'&#39;'}[c])); }
+function esc(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
